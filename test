@@ -1,0 +1,79 @@
+Install-WindowsFeature –Name AD-domain-services -IncludeManagementTools 
+
+Import-Module ActiveDirectory 
+
+while ($true) { 
+
+Get-ADUser -Filter * -Property SamAccountName | Select-Object SamAccountName | Sort-Object 	SamAccountName 
+
+$username = Read-Host "Enter the username of the account to change password or type 'exit' to quit" 
+
+if ($username.ToLower() -eq 'exit') { 
+
+ Write-Host "Exiting the script..."  
+
+break } 
+
+if ($username -eq $null) {  
+
+Write-Host "User not found!"  
+
+exit } 
+
+$newPassword = Read-Host "Enter the new password" -AsSecureString 
+
+Set-ADAccountPassword -Identity $username -NewPassword $newPassword –Reset 
+
+Write-Host "Password changed for user $username."  
+
+} 
+
+Set-ADDefaultDomainPasswordPolicy -MinPasswordLength 14 -ComplexityEnabled $true 
+
+Set-ADDefaultDomainPasswordPolicy -LockoutThreshold 5 -LockoutDuration 15 -LockoutObservationWindow 15 
+
+Install-WindowsFeature -Name DNS 
+
+$localIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -notlike "169.*"} | Select-Object –First 1).IPAddress 
+
+Write-Host "Using IP Address $localIP for DNS Server Listening IP"  
+
+ $DnsServerSettings = Get-DnsServerSetting -All 
+
+ $DnsServerSettings.ListeningIpAddress = @($localIP) 
+
+Set-DnsServerSetting -Setting $DnsServerSettings 
+
+Write-Host "DNS Server listening IP address set to $localIP"  
+
+ $RootHintServer = (Get-DnsServerRootHint | Where-Object {$_.NameServer.RecordData.NameServer -match $localIP}) 
+
+ if ($RootHintServer) { 
+
+    $newRootHintIP = "8.8.8.8" 
+
+$RootHintServer.IPAddress[0].RecordData.Ipv4address = $newRootHintIP 
+
+Set-DnsServerRootHint $RootHintServer  
+
+    Write-Host "Root Hint updated to $newRootHintIP"  
+
+} else { 
+
+    Write-Host "Root Hint server with IP $localIP not found"  
+
+} 
+
+Set-DnsServerDiagnostics -EventLogLevel 2 
+
+Invoke-WebRequest -UseBasicParsing "https://raw.githubusercontent.com/microsoft/Windows-Containers/Main/helpful_tools/Install-DockerCE/install-docker-ce.ps1" -o install-docker-ce.ps1 
+
+.\install-docker-ce.ps1 
+
+Install-WindowsFeature DHCP –IncludeManagementTools 
+
+$address = Read-Host "Enter the DNS Name" 
+
+$dhcpip = Read-Host "Enter the IP Address" 
+
+ Add-DhcpServerInDC -DnsName $address -IPAddress $dhcpip 
