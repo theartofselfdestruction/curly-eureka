@@ -1,68 +1,69 @@
-Install-WindowsFeature –Name AD-domain-services -IncludeManagementTools 
+Install-WindowsFeature -Name AD-domain-services -IncludeManagementTools
 
-Import-Module ActiveDirectory 
+Import-Module ActiveDirectory
 
-while ($true) { 
-    Get-ADUser -Filter * -Property SamAccountName | Select-Object SamAccountName | Sort-Object SamAccountName 
+while ($true) {
+    Get-ADUser -Filter * -Property SamAccountName | Select-Object SamAccountName | Sort-Object SamAccountName
 
-    $username = Read-Host "Enter the username of the account to change password or type 'exit' to quit" 
+    $username = Read-Host "Enter the username of the account to change password or type 'exit' to quit"
 
-    if ($username.ToLower() -eq 'exit') { 
-        Write-Host "Exiting the script..."  
-        break 
+    if ($username.ToLower() -eq 'exit') {
+        Write-Host "Exiting the script..."
+        break
     }
 
-    if ($username -eq $null) {  
-        Write-Host "User not found!"  
-        exit 
+    if ([string]::IsNullOrWhiteSpace($username)) {
+        Write-Host "User not found!"
+        continue
     }
 
-    $newPassword = Read-Host "Enter the new password" -AsSecureString 
+    $newPassword = Read-Host "Enter the new password" -AsSecureString
 
-    Set-ADAccountPassword -Identity $username -NewPassword $newPassword –Reset 
+    Set-ADAccountPassword -Identity $username -NewPassword $newPassword -Reset
 
-    Write-Host "Password changed for user $username."  
+    Write-Host "Password changed for user $username."
 }
 
 # Password policy settings
-Set-ADDefaultDomainPasswordPolicy -MinPasswordLength 14 -ComplexityEnabled $true 
-Set-ADDefaultDomainPasswordPolicy -LockoutThreshold 5 -LockoutDuration 15 -LockoutObservationWindow 15 
+Set-ADDefaultDomainPasswordPolicy -MinPasswordLength 14 -ComplexityEnabled $true
+Set-ADDefaultDomainPasswordPolicy -LockoutThreshold 5 -LockoutDuration 15 -LockoutObservationWindow 15
 
 # Install DNS feature
-Install-WindowsFeature -Name DNS 
+Install-WindowsFeature -Name DNS
 
 # Get local IP Address for DNS Server Listening IP
-$localIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -notlike "169.*"} | Select-Object –First 1).IPAddress 
-Write-Host "Using IP Address $localIP for DNS Server Listening IP"  
+$localIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -notlike "169.*"} | Select-Object –First 1).IPAddress
+Write-Host "Using IP Address $localIP for DNS Server Listening IP"
 
 # Get DNS server settings
-$DnsServerSettings = Get-DnsServerSetting -All 
-$DnsServerSettings.ListeningIpAddress = @($localIP) 
-Set-DnsServerSetting -Setting $DnsServerSettings 
-Write-Host "DNS Server listening IP address set to $localIP"  
+$DnsServerSettings = Get-DnsServerSetting -All
+Set-DnsServer -IPAddress $localIP
+Write-Host "DNS Server listening IP address set to $localIP"
 
 # Update Root Hint server settings
-$RootHintServer = (Get-DnsServerRootHint | Where-Object {$_.NameServer.RecordData.NameServer -match $localIP}) 
-if ($RootHintServer) { 
-    $newRootHintIP = "8.8.8.8"
-    $RootHintServer.IPAddress[0].RecordData.Ipv4address = $newRootHintIP 
-    Set-DnsServerRootHint $RootHintServer  
-    Write-Host "Root Hint updated to $newRootHintIP"  
-} else { 
-    Write-Host "Root Hint server with IP $localIP not found"  
+$RootHintServer = (Get-DnsServerRootHint | Where-Object {$_.NameServer.RecordData.NameServer -match "8.8.8.8"})
+if ($RootHintServer) {
+    Set-DnsServerRootHint -IPAddress "8.8.8.8"
+    Write-Host "Root Hint updated to 8.8.8.8"
+} else {
+    Write-Host "No matching root hint found"
 }
 
 # Set DNS diagnostics
-Set-DnsServerDiagnostics -EventLogLevel 2 
+Set-DnsServerDiagnostics -EventLogLevel 2
 
 # Download and install Docker
-Invoke-WebRequest -UseBasicParsing "https://raw.githubusercontent.com/microsoft/Windows-Containers/Main/helpful_tools/Install-DockerCE/install-docker-ce.ps1" -o install-docker-ce.ps1 
-.\install-docker-ce.ps1 
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/microsoft/Windows-Containers/Main/helpful_tools/Install-DockerCE/install-docker-ce.ps1" -OutFile "install-docker-ce.ps1"
+.\install-docker-ce.ps1
 
 # Install DHCP
-Install-WindowsFeature DHCP –IncludeManagementTools 
+Install-WindowsFeature DHCP -IncludeManagementTools
 
 # Add DHCP Server in DC
-$address = Read-Host "Enter the DNS Name" 
-$dhcpip = Read-Host "Enter the IP Address" 
+$address = Read-Host "Enter the DNS Name"
+$dhcpip = Read-Host "Enter the IP Address"
+if ([string]::IsNullOrWhiteSpace($address) -or [string]::IsNullOrWhiteSpace($dhcpip)) {
+    Write-Host "DNS Name and IP Address are required."
+    continue
+}
 Add-DhcpServerInDC -DnsName $address -IPAddress $dhcpip
